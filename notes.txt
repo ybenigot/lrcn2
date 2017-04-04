@@ -1,0 +1,48 @@
+notes
+
+check that topology of net is of type B
+check that we can reload cunn conv layer in a nn conv layer (convert to float ?)
+
+void torch class on loading of model
+are we using the same version of Lua ?
+
+
+model loads on GPU
+model conversion fails with checkpoint attributes null, but printing checkpoint shows real structure
+--> let us try protos=torch.load
+
+now extend image to 4D tensor in orbit
+
+find imagenet 1000 lines file
+always the same output even if input tensor is 0
+
+with GPU
+/home/yves/torch/install/share/lua/5.1/nn/Container.lua:67: 
+In 1 module of nn.Sequential:
+/home/yves/torch/install/share/lua/5.1/cudnn/init.lua:171: assertion failed!
+stack traceback:
+	[C]: in function 'assert'
+	/home/yves/torch/install/share/lua/5.1/cudnn/init.lua:171: in function 'toDescriptor'
+	...torch/install/share/lua/5.1/cudnn/SpatialConvolution.lua:123: in function 'createIODescriptors'
+	...torch/install/share/lua/5.1/cudnn/SpatialConvolution.lua:188: in function <...torch/install/share/lua/5.1/cudnn/SpatialConvolution.lua:186>
+	[C]: in function 'xpcall'
+	/home/yves/torch/install/share/lua/5.1/nn/Container.lua:63: in function 'rethrowErrors'
+	/home/yves/torch/install/share/lua/5.1/nn/Sequential.lua:44: in function 'forward'
+	/home/yves/Dropbox/torch/resnet/webapp/predict.lua:93: in function 
+	[C]: in function 'xpcall'
+	/home/yves/torch/install/share/lua/5.1/orbit.lua:548: in function 
+	[C]: in function 'run_app'
+	/home/yves/torch/install/share/lua/5.1/wsapi/xavante.lua:89: in function 'handle_request'
+	/home/yves/torch/install/share/lua/5.1/xavante/httpd.lua:64: in function 
+
+WARNING: If you see a stack trace below, it doesn't point to the place where this error occurred. Please use only the one above.
+stack traceback:
+	[C]: in function 'error'
+	/home/yves/torch/install/share/lua/5.1/nn/Container.lua:67: in function 'rethrowErrors'
+	/home/yves/torch/install/share/lua/5.1/nn/Sequential.lua:44: in function 'forward'
+	/home/yves/Dropbox/torch/resnet/webapp/predict.lua:93: in function 
+	[C]: in function 'xpcall'
+	/home/yves/torch/install/share/lua/5.1/orbit.lua:548: in function 
+	[C]: in function 'run_app'
+	/home/yves/torch/install/share/lua/5.1/wsapi/xavante.lua:89: in function 'handle_request'
+	/home/yves/torch/install/share/lua/5.1/xavante/httpd.lua:64: in function 
