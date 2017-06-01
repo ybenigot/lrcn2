@@ -14,44 +14,60 @@
 require 'nn'
 require 'torch'
 
-gpu=false
-
-if gpu then
+if GPU then
       require 'cunn'
       require 'cudnn'
-      file_name = 'gpu_model_best.t7'
-      tensor_name = 'torch.CudaTensor'
+      MODEL_FILE = 'gpu_model_best.t7'
+      TENSOR_NAME = 'torch.CudaTensor'
 else
-      file_name = 'model_cpu.t7'
-      tensor_name = 'torch.FloatTensor'
+      MODEL_FILE = 'model_cpu.t7'
+      TENSOR_NAME = 'torch.FloatTensor'
 end   
+
+local MODEL_DIR=nil
+if MACHINE == 'mac' then
+   MODEL_DIR='/Users/yves/Dropbox/torch/resnet/models'
+else
+   MODEL_DIR='/home/yves/Dropbox/torch/resnet/models'
+end
+
+print(MODEL_DIR,MODEL_FILE)
 
 local M = {}
 
-function M.setup()
+function M.setup(predict)
    local model
 
    print('=> Creating model from file resnet.lua')
    model = require('models/resnet')
 
    --- set model file weights name
-   local modelPath = paths.concat('../models', file_name)
-   
+   local modelPath = paths.concat(MODEL_DIR, MODEL_FILE)
    assert(paths.filep(modelPath), 'Saved model not found: ' .. modelPath)
    print('=> Resuming model from ' .. modelPath)
-   model = torch.load(modelPath):type(tensor_name)
+   model = torch.load(modelPath):type(TENSOR_NAME)
       
    model.__memoryOptimized = nil
 
    local softMaxLayer = nn.SoftMax()
 
-   -- add Softmax layer
-   model:add(softMaxLayer)
+   if predict then
+     -- add Softmax layer
+     print('add softmax to resnet for prediction')
+     model:add(softMaxLayer)
+   end
 
    -- Evaluate mode
    model:evaluate()
 
-   return model
+   -- compute output layer size
+   modules=model.modules
+
+   --print('model topology ',#modules)
+   --print(modules)
+   --output_size = modules[#modules].output.size()
+
+   return model, 1000
 end
 
 return M
