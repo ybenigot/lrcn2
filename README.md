@@ -1,2 +1,1 @@
-# resnet-torch
 # lrcn2
