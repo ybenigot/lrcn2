@@ -17,18 +17,18 @@ require 'torch'
 if GPU then
       require 'cunn'
       require 'cudnn'
-      MODEL_FILE = 'gpu_model_best.t7'
+      MODEL_FILE = 'resnet_gpu_model_best.t7'
       TENSOR_NAME = 'torch.CudaTensor'
 else
-      MODEL_FILE = 'model_cpu.t7'
+      MODEL_FILE = 'resnet_cpu_model.t7'
       TENSOR_NAME = 'torch.FloatTensor'
 end   
 
 local MODEL_DIR=nil
 if MACHINE == 'mac' then
-   MODEL_DIR='/Users/yves/Dropbox/torch/resnet/models'
+   MODEL_DIR='/Users/yves/Dropbox/torch/lrcn2/parameters'
 else
-   MODEL_DIR='/home/yves/Dropbox/torch/resnet/models'
+   MODEL_DIR='/home/yves/Dropbox/torch/lrcn2/parameters'
 end
 
 print(MODEL_DIR,MODEL_FILE)
@@ -67,7 +67,7 @@ function M.setup(predict)
    --print(modules)
    --output_size = modules[#modules].output.size()
 
-   return model, 1000
+   return model
 end
 
 return M

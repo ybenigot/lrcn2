@@ -74,4 +74,51 @@ LRCN 2f is better -> adapt NN architecture -> we should add the image representa
 check if there is a need for a non linear output stage -> replace glove by a linear layer before and after all LSTM, mapping dictionnary one hot vectors to glove embedding, using the vector text file to initialize the parameters
 nn.Linear
 
+-- 02/06
+we must define a multiple entry model :
+- input sentence goes to the linear input
+- input image goes to the lstm entry of layer 2
+so forward is not as simple a a single input network
+
+we need a way to block the weights of a module to be update by BP : subclass the layer and overrid the parameterupdate
+-->
+You can set the learning rate of certain layers to zero by overriding their updateParameters and accGradParameters to zero. You don't necessarily have to subclass, but it is cleaner.
+https://gist.github.com/soumith/6cd0f9b8462d0507a91b
+https://www.reddit.com/r/MachineLearning/comments/44ochv/forcing_learning_rate_to_zero_in_torch/
+
+also we need a way to make connection between non adjacent layers --> nngraph
+
+
+check representation of words after the end of sentence, remove point ?
+coco_to_hdf5.py vocabulary detection is limited to words which appear in at least 5 sentences
+new architecture : Glove -> 1000 , image = first input instead of BOS
+so the input Linear is not part of the caption.lua network
+
+last word overwrites all others in target
+
+try learning rate as 1/x not an exponential
+
+getparams ?
+two level lstm used : beware of camptibility ...
+now I save the full lstm, not just the flattended parameters used for propagation
+
+convert model to float() before save
+the saved lstm uses a sequencer
+the mac install is broken there is a conflict between nn and rnn, see rnn install recommandations
+lstm.module.module:get(1) gives first lstm
+
+check generated sentence : lstm ouputs only unk whichis the last vector coordinate to 1
+glove envoding is not using the good files, size is incorrect
+see test.lua
+
+------
+Process
+train resnet on imagenet, remove last layer, and keep a 1000x1 output vector size
+train glove on train caption of coco, keeping all words
+preprocess coco dataset to create coco-caption.txt which holds file names and sentences for train, val datasets
+train lstm uging GloVe embeddings and resnet as input
+predict using predict.lua which is an orbit webapp
+-------
+
+halve batch size : crash after the same number of batches (625) , so half the number of samples ??
 

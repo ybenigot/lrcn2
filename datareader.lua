@@ -1,34 +1,20 @@
 -- data reader for coco, multithread, with caption reading
 
 require 'io'
+require 'hwconfig'
 
 local M = {}
-local DataReader = torch.class('lrcn.DataReader', M)
-
-if MACHINE == 'pc' then
-    DATASET_INFO = 'coco-caption-pc.txt'
-elseif MACHINE == 'mac' then
-    DATASET_INFO = 'coco-caption-mac.txt'
-elseif MACHINE == 'pc2' then
-    DATASET_INFO = 'coco-caption-pc2.txt'
-else
-    DATASET_INFO = 'coco-caption-pc.txt'
-end    
+local DataReader = torch.class('DataReader', M)
 
 local WORD_FILE='webapp/words1000.txt'
 
+local dataset 
+local words -- the dictionnary of labels corresponding to an output value of the cnn
 
-function DataReader.create()
-   return M.DataReader()
-end
-
-local dataset = {}
-local words={} -- the dictionnary of labels corresponding to an output value of the cnn
-
-
-local function load_images()
+function DataReader:load_images(dataset_type)
 
     local n=1;
+    local DATASET_INFO = 'dataset/coco-caption-'..dataset_type..'-'..MACHINE..'.txt'
 
 	for line in io.lines(DATASET_INFO) do
 		local first = true
@@ -44,31 +30,33 @@ local function load_images()
 		end
 		--print('filepath : ',filepath)
 		--print('caption : ' ,sentence) 
-		dataset[n]={}
-		dataset[n]['file'] = filepath
-		dataset[n]['caption'] = sentence
+		self.dataset[n]={}
+		self.dataset[n]['file'] = filepath
+		self.dataset[n]['caption'] = sentence
 		n = n + 1
 	end	
 end
 
 -- load index to prediction label table from,imagenet word file
-local function load_words()
+function DataReader:load_words()
 	local i=1
 	for line in io.lines(WORD_FILE) do
-	  words[i] = line
+	  self.words[i] = line
 	  i = i + 1
 	end  
 	print('read '..(i-1)..' lines')
 end
 
-function DataReader:__init()
-	load_images()
-	load_words() -- imagenet correspondence table for transfert learning
+function DataReader:__init(dataset_type)
+	self.dataset = {}
+	self.words = {}
+	self:load_images(dataset_type)
+	self:load_words() -- imagenet correspondence table for transfert learning
 end
 
 
 function DataReader:get_dataset() 
-	return dataset
+	return self.dataset
 end
 
 -- see: http://en.wikipedia.org/wiki/Fisher-Yates_shuffle
@@ -86,7 +74,7 @@ end
 
 -- returns the word table for imagenet, not MScoco, useful only for transfert learning use case
 function DataReader:get_words() 
-	return words
+	return self.words
 end
 
 return M.DataReader

@@ -6,7 +6,7 @@
 --
 -- this code can do :
 --    LRCN training, with a freezed resnet        use LSTM_TRAIN  = true
---    resnet prediction (for testing purposes)    use CNN_PREDICT = TRUE
+--    resnet prediction (for testing purposes)    use CNN_PREDICT = true
 --    LRCN prediction                             use LSTM_PREDICT = true
 
 require 'paths'
@@ -15,6 +15,7 @@ require 'rnn'
 require 'image'
 require 'optim'
 require 'io'
+require 'os'
 
 require 'hwconfig'
 
@@ -30,28 +31,28 @@ local CNN_PREDICT = false   -- starts the CNN in predict mode, as opposed to use
 local LSTM_PREDICT = false  -- starts the LSTM in predict mode, requires CNN_PREDICT=true
 local LSTM_TRAIN = true     -- runs a LSTM only training
 
--- constants
-local BOS = to_cuda(torch.zeros(GloVe.vector_size()))
-local EOS = GloVe:word2vec(".",false)
-
-print("vector size",GloVe.vector_size())
+print("vector size",GloVe:vectorSize())
 
 require 'hyperparams'
 
-local logger = optim.Logger('accuracy.log')
+local logger = optim.Logger('log/accuracy.log')
 logger:setNames{'epoch', 'sample', 'loss'}
 
 require 'disputils'
 
--- data loading
-local reader=DataReader.create()
-local dataset=reader.get_dataset()
-local words=reader.get_words()
+-- define training set
+local reader_train=DataReader("train")
+local dataset_train=reader_train:get_dataset()
+local words=reader_train:get_words()
+-- define validation set
+local reader_val=DataReader("val")
+local dataset_val=reader_val:get_dataset()
+
 
 -----------------------------------------------------------------------------------
 
 -- read one file as a torch image, handle b&w images
-local function get_image_input(sample)
+local function getImageInput(sample)
 
 	local ok,img = pcall(image.load,sample.file)
 	if not ok then
@@ -66,6 +67,7 @@ local function get_image_input(sample)
     	if size[1]==1 then
     		bw = img:view(1,1,SIZE,SIZE)
     		input = torch.cat(bw,bw,2):cat(bw,2)
+    		print("processed b&w image ",sample.file)
     	else
     		print('invalid size for image)',size)
     	end
@@ -74,30 +76,30 @@ local function get_image_input(sample)
 end	
 
 -- compute the table of word vectors for the caption target
-local function compute_target_caption(sample)
+local function computeTargetCaption(sample)
 	-- do the sentence processing using GloVe, to compute expected caption prediction
     local caption_target = {}
     local last_index=0
-    -- print(sample.caption)
     for i,token in pairs(sample.caption) do
-	   	local word_vector = GloVe:word2vec(token,false) 
+	   	local word_vector = GloVe:oneHot(token) 
 	   	assert (word_vector ~= nil, "nil word vector")
-	   	caption_target[i] = word_vector
+	   	local word_embedding = encode_layer:forward(to_cuda(word_vector))
+	   	caption_target[i] = to_cuda(word_embedding):clone()
 	   	last_index = i
-		--print ("      initial word : ",token)	
-		--print ("reconstructed word : ",GloVe:vec2word(word_vector))
-		--print ("--------------------------------------")
+	   	if i == MAX_SENTENCE_LENGTH then
+	   		break -- truncate sentences that are too long
+	   	end	
 	end
-	-- put a zero vector = EOS at the end of sequence, up to max size
-	--[[for i = last_index+1, MAX_SENTENCE_LENGTH do
-		caption_target[i] = EOS 
-	end]]--
-	caption_target[last_index+1] = EOS -- add a point at the end of sentence
+	-- put an End Of Sentence vector at the end of sequence, up to max size
+	-- because all the samples in a mini batch need to be of the same sequence length
+	for i = last_index+1, MAX_SENTENCE_LENGTH do
+		caption_target[i] = EOS
+	end
 	return caption_target
 end	
 
 -- predict image class according to ImageNet classes taxonomy
-local function predict_image_class(sample,image_output)
+local function predictImageClass(sample,image_output)
 
     local maxs, indices = tensor.max(image_output,3)
     local predicted = indices[1]
@@ -112,10 +114,10 @@ local function predict_image_class(sample,image_output)
 end	
 
 -- compute the predicted caption using LSTM
-local function predict_image_caption()
+local function predictImageCaption()
 
 	-- forward prop through the LSTM
-	local lstm_output = BOS
+	local lstm_output
 	local i = 0
     local caption_predicted = {}
 	repeat
@@ -127,137 +129,230 @@ local function predict_image_caption()
 	return caption_predicted
 end	
 
+
+-- this is the forward step definition funaction
+function forward()
+  -- forward through LSTM the image representation and target sentence
+  local outputs = lstm:forward(inputs) -- 20x128x1000 -> 20:128x4000
+  -- compute the loss as cross entropy
+  local loss = criterion:forward(outputs, classIndexes)
+  -- display target sentence and predicted sentence for a random sample of the minibatch
+  display_word_outputs(outputs,labels,loss,math.random(1,BATCH_SIZE),epoch,current_lr)
+  logger:add{epoch, sample_number, loss}
+  return loss
+end
+
+
+-- this is the gradient descent step definition funaction
+function forward_backward(params)
+  lstm:forget()
+  gradParams:zero() 
+  -- forward through LSTM the image representation and target sentence
+  --print  ("inputs", inputs)
+  --print("inputs[1]",inputs[1]:size())
+  local outputs = lstm:forward(inputs) -- 20x128x1000 -> 20:128x4000
+  -- compute the loss as cross entropy
+  local loss = criterion:forward(outputs, classIndexes)
+  -- display target sentence and predicted sentence for a random sample of the minibatch
+  display_word_outputs(outputs,labels,loss,math.random(1,BATCH_SIZE),epoch,current_lr)
+  logger:add{epoch, sample_number, loss}
+  -- backprop on the loss
+  local gradOutputs = criterion:backward(outputs, classIndexes)
+  -- backprop on the LSTM
+  lstm:backward(inputs, gradOutputs) --  20x128x1000, 2x2x128x300 , return value is not used
+  return loss, gradParams
+end
+
+
+-- process the dataset in trazining or validation mode
+local function process_dataset(dataset,train)
+
+--SAMPLE_SAVE_COUNT=BATCH_SIZE*2
+
+	print (train and "==================== process training set" or "===================== process validation set")
+
+	for m,sample in pairs(dataset) do
+
+		sample_number=m
+
+	    local ok, input =  pcall(getImageInput,sample)
+	    if not ok then
+			print('no image for ',sample.file,' at sample ', m)
+			input = input_old
+		end		
+		if m == 1 then
+			-- FIXME find a way to go to the next pair : here we use another image to replace the missing one
+			input_old = input -- default image in case we cannot read it, otherwise the mini-batch is not complete
+		end
+		
+		-- forward the image through the CNN to create a representation
+	    local image_output = to_cuda(cnn:forward(input))    -- run the image data through the CNN
+	    local target = computeTargetCaption(sample)          --  target value for LSTM training on captions
+	    local caption_predicted
+	 
+	    if CNN_PREDICT or LSTM_PREDICT then
+		    if CNN_PREDICT  then predictImageClass(sample,image_output)   end   -- predict image class as ImageNet taxonomy and print it
+			if DISPLAY      then manage_display(m,input) end   -- display first 16 images for checking
+			if LSTM_PREDICT then
+				caption_predicted = predictImageCaption()    -- compute caption predicted for image
+			end
+		end	-- PREDICT
+
+		if LSTM_TRAIN then
+			local batch_index = 1 + (m - 1) % BATCH_SIZE
+			local input_flat = image_output:view(CNN_OUTPUT_SIZE)
+			local previous_target = input_flat:clone() -- first input is the image
+			-- the preceding word is set at the LSTM input, because the LSTM should predict it
+			-- in prediction mode of course the previous output of the the LSTM should be the next input
+			for s = 1, math.min(#target, MAX_SENTENCE_LENGTH) do 	
+				inputs[s][batch_index] = previous_target
+				local label =decode_layer:forward(target[s])
+				labels[s][batch_index] = label:clone()
+				classIndexes[s][batch_index] = GloVe:classIndex(labels[s][batch_index]) 
+				previous_target = target[s] -- here there is nother recurrence of the s-1 output to the current input
+			end
+
+			if batch_index == BATCH_SIZE then
+
+				print("processing sample ",m)
+
+				if train then
+				   	local optimState = {learningRate = current_lr}
+				   	-- do the gradient descente, optim will repetitively call the forward_backward function
+				   	-- and update de parameters according to the computed gradient and the learning rate parameter
+				   	local ok = pcall (optim.sgd, forward_backward, params, optimState) -- TODO : try rmsprop
+				   	if not ok then
+				   		print("********************* INVALID SGD FOR ",m)
+					end
+				   	-- save parameters in case there is a program abort
+				   	if m % SAMPLE_SAVE_COUNT == 0 then
+				   		--params = lstm:getParameters()
+				   		torch.save('parameters/lstm-params.t7', lstm:float())
+				   	end
+				else
+					local loss=forward()
+				end
+
+				init_tables() -- reinit mini batch tables for next mini batch
+			end
+		end -- LSTM_TRAIN
+			
+--[[if m % SAMPLE_SAVE_COUNT == 0 then
+	return
+end	]]--
+
+	end -- samples
+
+end	
+
+-- init the LSTM networks, the coding/decoding layers, and the raining criterium
+function init_lstm()
+
+	-- LSTM model loading
+	if LSTM_PREDICT or LSTM_TRAIN then
+
+		local embedding_size = GloVe:vectorSize()
+		local dict_size = GloVe:dictionarySize()
+
+		-- create embedding layers to encode/decode word embeddings
+		-- these layers are not subject to backprop
+		encode_layer = nn.Linear(dict_size, embedding_size)
+		decode_layer = nn.Linear(embedding_size, dict_size)
+		encode_layer.weight[{ {1, embedding_size} , {1, dict_size} }] = GloVe:encoding():transpose(1,2)
+		decode_layer.weight[{ {1, dict_size} , {1, embedding_size} }] = GloVe:encoding()
+		encode_layer = to_cuda(encode_layer)
+		decode_layer = to_cuda(decode_layer)
+
+		-- constants
+		-- BOS = to_cuda(encode_layer:forward(torch.zeros(GloVe:dictSize())))
+		EOS = to_cuda(encode_layer:forward(to_cuda(GloVe:oneHot('<unk>')))):clone()
+
+		-- create the LSTM model itself, the is an implicit assumption that image representations
+		-- and word representations are of the same size
+		-- so the image can be the initial word input into the LSTM
+		lstm = nn.Sequencer(lstm_model.createCaptionModel(
+			CNN_OUTPUT_SIZE, dict_size, embedding_size, GloVe:encoding(), MAX_SENTENCE_LENGTH, false))
+
+		to_cuda(lstm)
+
+		print(lstm)
+
+		-- the loss will be the cross entropy computed after a sofmax on a sequence
+		-- of one hot output word vectors
+		criterion = to_cuda(nn.SequencerCriterion(nn.CrossEntropyCriterion()))
+
+		-- set these variables to point to the LSTM parameters so as to use them in gradient descent
+		params, gradParams = lstm:getParameters()
+	end
+
+	print("EOS",GloVe:token(decode_layer:forward(to_cuda(EOS:float()))))
+
+end
+
+-- init the data tables used for each batch
+function init_tables()
+	for s=1,MAX_SENTENCE_LENGTH do 
+		inputs[s] = to_cuda(torch.zeros(BATCH_SIZE, CNN_OUTPUT_SIZE))
+		labels[s] = to_cuda(torch.zeros(BATCH_SIZE, GloVe:dictionarySize() ))
+		classIndexes[s] = to_cuda(torch.zeros(BATCH_SIZE))
+	end
+end
+
+
 ------------------- MAIN ------------------
+-- cnn, encode_layer, decode_layer lstm, criterion, params, gradparams, inpit, labels, classIndexes, epoch, input_old
 
 torch.setdefaulttensortype('torch.FloatTensor') 
 torch.setnumthreads(8) 
 
 -- resnet model loading
-local cnn,cnn_output_size = models.setup(CNN_PREDICT)
-cnn=nn.Sequencer(cnn)
-local LSTM_INPUT_SIZE=cnn_output_size + GloVe:vector_size()
+cnn = models.setup(CNN_PREDICT)
+cnn = nn.Sequencer(cnn)
 
--- optim parameters
-local params, gradParams 
-
--- LSTM model loading
-if LSTM_PREDICT or LSTM_TRAIN then
-  lstm = nn.Sequencer(lstm_model.createCaptionModel(
-  	LSTM_INPUT_SIZE, GloVe:vector_size(),MAX_SENTENCE_LENGTH))
-  print(lstm)
-  local base_criterion = nn.MSECriterion()
-  base_criterion.sizeAverage=false
-  criterion = nn.SequencerCriterion(base_criterion)
-  to_cuda(criterion)
-  params, gradParams = lstm:getParameters()
-end
-
-print("BOS",GloVe:vec2word(BOS:float()))
-
+init_lstm()
 
 -- initializations
-local image_tensor = {}
-for i=1,4 do image_tensor[i]={} end
-local BatchInputTable = {}
-local BatchLabelTable = {}
-local function init_tables()
-	for s=1,MAX_SENTENCE_LENGTH do 
-		BatchInputTable[s] = to_cuda(torch.zeros(BATCH_SIZE, LSTM_INPUT_SIZE))
-		BatchLabelTable[s] = to_cuda(torch.zeros(BATCH_SIZE, GloVe:vector_size()))
-	end
-end
+inputs = {}
+labels = {}
+classIndexes = {}
+sample_number=0 -- global variable sample number
+
 init_tables()
 
--- process dataset
+epoch=0       -- make it global
+input_old = 0 -- make it global
+
+current_lr = LEARNING_RATE
+
+
+--MAX_EPOCH=2 -- ******************
+
 for epoch = 1,MAX_EPOCH do
-	dataset = DataReader:shuffle(dataset) -- random shuffle samples at each epoch
-	for m,sample in pairs(dataset) do
 
-		--[[if m > (1 * BATCH_SIZE) then
-			break -- testing on a little dataset
-		end]]--	
+	-- train on the dataset
 
-	    ok, input =  pcall(get_image_input,sample)
-	    if not ok then
-			print('no image for ',sample.file,' at sample ', m)
-		else		
-		    local image_output_raw = cnn:forward(input):float()    -- run the image data through the CNN
-			local image_output = to_cuda(image_output_raw)     		    
-		    local target = compute_target_caption(sample)          --  target value for LSTM training on captions
-		 
-		    if CNN_PREDICT or LSTM_PREDICT then
-			    if CNN_PREDICT  then predict_image_class(sample,image_output)   end   -- predict image class as ImageNet taxonomy and print it
-				if DISPLAY      then manage_display(m,input) end   -- display first 16 images for checking
-				if LSTM_PREDICT then
-					caption_predicted = predict_image_caption()    -- compute caption predicted for image
-				end
-			end	-- PREDICT
+	dataset_train = DataReader:shuffle(dataset_train) -- random shuffle samples at each epoch
+	process_dataset(dataset_train,true)
 
-			if LSTM_TRAIN then
-				local batch_index = 1 + (m - 1) % BATCH_SIZE
-				--print("batch_index",batch_index)
+	-- validate the dataset
 
-				local previous_target = BOS
-				local input_flat = to_cuda(image_output:view(CNN_OUTPUT_SIZE))
-				for s = 1, math.min(#target, MAX_SENTENCE_LENGTH) do						--print_tensor('image_output',image_output)
-					BatchInputTable[s][batch_index] = input_flat:cat(to_cuda(previous_target))
-					BatchLabelTable[s][batch_index] = target[s]	
-					previous_target = target[s]				
-					--print_tensor("previous_target",previous_target)
-					--print_tensor('batch input',BatchInputTable[s][batch_index])				
-				end
+	dataset_val = DataReader:shuffle(dataset_val) -- random shuffle samples at each epoch
+	process_dataset(dataset_val,false)
 
-				if batch_index == BATCH_SIZE then
-				   	function forward_backward(params)
-				      gradParams:zero() 
-				      local outputs = lstm:forward(BatchInputTable) -- 20x128x1000 -> 20:128x300
-				      local loss = criterion:forward(outputs, BatchLabelTable)
-				      display_word_outputs(outputs,BatchLabelTable,loss,math.random(1,BATCH_SIZE))
-				      logger:add{epoch, m, loss}
-				      local gradOutputs = criterion:backward(outputs, BatchLabelTable)
-				      local gradInputs = lstm:backward(BatchInputTable, gradOutputs) --  20x128x1000, 2x2x128x300
-				      return loss, gradParams
-				   	end
-				   	local optimState = {learningRate = LEARNING_RATE}
-				   	print_tensor("grad",gradParams)
-				   	print_tensor("params",params)
-				   	optim.sgd(forward_backward, params, optimState) -- TODO : try rmsprop
-				   	if m % SAMPLE_SAVE_COUNT == 0 then
-				   		params = lstm:getParameters()
-				   		torch.save('lstm-params.t7', params:float())
-				   	end
-					init_tables()
-				end
-			end -- LSTM_TRAIN
-		end	
-	end -- samples
-	if epoch % LR_DECAY_EPOCH_COUNT == 0 then
-		LEARNING_RATE = LEARNING_RATE / 2
-		print("learning rate changed to : ", LEARNING_RATE)
-	end	
+	--[[if epoch % LR_DECAY_EPOCH_COUNT == 0 then
+		current_lr = current_lr / 2
+		print("learning rate changed to : ", current_lr)
+	end	]]--
+	current_lr = LEARNING_RATE / (1 + epoch / 10)
+	print("learning rate changed to : ", current_lr)	
+
 end
 
 if LSTM_TRAIN then
 	print('final save of model')
-	params = lstm:getParameters()
-	torch.save('lstm-params-final.t7', params:float())
+	--params = lstm:getParameters()
+	local datetime=os.date("%m-%d-%y-%H-%M-%S")
+	torch.save('parameters/lstm-params-final-'..datetime..'.t7', lstm:float()) -- params:float()
 end
 
 print('main ended')
-
---[[
---  criterion = nn.SequencerCriterion(nn.CosineEmbeddingCriterion())
-				    --local YVALUES = {to_cuda(torch.ones(BATCH_SIZE)),to_cuda(torch.ones(BATCH_SIZE))}
-				      -- local loss = criterion:forward{outputs, BatchLabelTable}, YVALUES)
-				      --local dloss_doutputs = criterion:backward{outputs, BatchLabelTable}, YVALUES)
-				      --local dloss = {}
-				      -- we use the same gradient for all time steps, because the parameters are common for all time step
-				      --for i=1,#BatchInputTable do
-				      --    dloss[i] = dloss_doutputs[1][1] -- FIXME 1 1
-				      --end    
-
-
-]]--
-
-
-

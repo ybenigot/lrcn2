@@ -66,46 +66,39 @@ function vector2csv(vec)
   return table.concat(vec:totable(),',')
 end 
 
-local file = io.open("trace-disputils.txt", 'w')
+local file = io.open("log/trace-disputils.txt", 'w') -- file we be closed implicitly at the end of the program
+local old_epoch=0
 
 -- display first batch item captions computed/expected
-function display_word_outputs(outputs,targets,loss,batch_index)
+function display_word_outputs(outputs,targets,loss,batch_index,epoch,lr)
 	local target_sentence
 	local computed_sentence
---	local previous_vector
---	local mse = 0
+	if epoch ~= old_epoch then
+		old_epoch=epoch
+		file:write(" epoch: "..epoch..", learning rate: "..lr.."\n")
+	end	
 	for i=1,MAX_SENTENCE_LENGTH do
 		local delta = outputs[i] - targets[i]
---		local mse1 = torch.mean(torch.cmul(delta,delta)) 
---		mse = mse + mse1
---		file:write('L'..i..','..outputs[i][1]:norm()..','..targets[i][1]:norm()..
---			          " \n "..vector2csv(outputs[i][1])..
---			          " \n "..vector2csv(targets[i][1])..
---			          " \n "..mse1)
 		if i == 1 then
-			target_sentence   = GloVe:vec2word(targets[i][1]:float())
-			computed_sentence = GloVe:vec2word(outputs[i][1]:float())
+			target_sentence   = GloVe:token(targets[i][1]:float())
+			computed_sentence = GloVe:token(outputs[i][1]:float())
 		else
-			target_sentence   =   target_sentence..' '..GloVe:vec2word(targets[i][1]:float())
-			computed_sentence = computed_sentence..' '..GloVe:vec2word(outputs[i][1]:float())
+			target_sentence   =   target_sentence..' '..GloVe:token(targets[i][1]:float())
+			computed_sentence = computed_sentence..' '..GloVe:token(outputs[i][1]:float())
 		end
 		local current_vector = outputs[i][1]:float()
---		if i > 1 then 
---			print("delta s/s-1 : ",
---				torch.max(torch.abs(current_vector - previous_vector)), " mse ",mse1)
---		end	
 		previous_vector = current_vector
 	end	
+
 	print ("    target sentence : ",target_sentence)	
 	print ("computed",batch_index," : ",computed_sentence)
 	print ("batch loss : ",loss)
---	print ("total MSE",mse)
 	print ("-------------------------------------")
+
 	file:write("    target sentence : "..target_sentence.."\n")
 	file:write("computed"..batch_index.." : "..computed_sentence.."\n")
 	file:write ("batch loss : "..loss.."\n")
 	
---	--file:close()
 end
 
 function print_tensor(name,t)
