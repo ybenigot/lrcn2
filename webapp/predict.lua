@@ -1,11 +1,30 @@
 #!/usr/bin/env wsapi.cgi
 
+-- use webapp/serve.sh to start this
+
+require 'torch'
+require 'paths'
+require 'nn'
+require 'rnn'
+require 'nngraph'
+require 'image'
+
+nn.FastLSTM.usenngraph = true -- faster
+nn.FastLSTM.bn = true -- normalize hidden values
+
 -- autoconfiguration based on hostname
 local hostname=io.popen('hostname'):read()
 if string.sub(hostname,1,7) == 'yvesMBP' then
   MACHINE='mac'
+  --LSTM_FILE  = '/Users/yves/Documents/lrcn2/parameters/lstm-float-2106.t7'
+  LSTM_FILE ='/Users/yves/Documents/lrcn2/parameters/lstm-params-2-float.t7'
+  LSTM1_FILE = '/Users/yves/Documents/lrcn2/parameters/lstm1-float.t7'
+  LSTM2_FILE = '/Users/yves/Documents/lrcn2/parameters/lstm2-float.t7'
 elseif hostname == 'pcybldlc' then
   MACHINE='pc'
+  LSTM_FILE  = '/home/yves/save/lrcn2/parameters/lstm-params-3006-float.t7'
+  LSTM1_FILE = '/home/yves/save/lrcn2/parameters/lstm1-params.t7'
+  LSTM2_FILE = '/home/yves/save/lrcn2/parameters/lstm2-params.t7'
 else  
   MACHINE='pc'
 end
@@ -13,24 +32,15 @@ print("Machine : ",MACHINE)
 
 -- we do not use GPU for prediction
 GPU=false
-    function to_cuda(obj) 
-      return obj
-    end 
 
-local orbit = require "orbit"
+function to_cuda(obj) 
+  return obj
+end 
 
-require 'torch'
-require 'paths'
-require 'nn'
-require 'image'
 local cnn_model  = require 'models/init'
-local lstm_model = require 'models/caption'
 local GloVe = require 'glove/glove'
-
--- general network topology parameters
-local MAX_SENTENCE_LENGTH = 20
-local CNN_OUTPUT_SIZE = 1000
-local SIZE=224 -- size of neural net input images 
+require 'hyperparams'
+local orbit = require "orbit"
 
 module("predict", package.seeall, orbit.new)
 
@@ -50,12 +60,23 @@ module("predict", package.seeall, orbit.new)
     print(model)
 
     print("create and init lstm model...")
-    lstm = lstm_model.createCaptionModel(LSTM_INPUT_SIZE, GloVe:vector_size())
-    lstm = nn.Sequencer(lstm)
-    params = torch.load('lstm-params-cpu-1.t7')
-    parameters = lstm:getParameters()
-    parameters = params:clone()
-    print("...created lstm")
+    local embedding_size = GloVe:vectorSize()
+    local dict_size = GloVe:dictionarySize()
+
+    local load_model = true
+    if load_model then   
+      lstm = torch.load(LSTM_FILE) -- parameters/lstm-params-final.t7
+      lstm.module.module:add(nn.LogSoftMax()) -- add sofmax under the sequuencer/recurrent 
+    else -- load individual lstm layers
+      local lstm_model = require 'models/caption'
+      lstm = lstm_model.createCaptionModel(CNN_OUTPUT_SIZE, dict_size, embedding_size, GloVe:encoding(), 
+                                         MAX_SENTENCE_LENGTH, true, LSTM1_FILE, LSTM2_FILE,"binary")
+    end
+
+    print("...created lstm", lstm)
+    encode_layer = nn.Linear(dict_size, embedding_size)
+    encode_layer.weight[{ {1, embedding_size} , {1, dict_size} }] = GloVe:encoding():transpose(1,2)
+    print("...created encoding layer",encode_layer)
   end
 
 print("using ".._VERSION)
@@ -66,11 +87,40 @@ local image_name ='temp.jpg'
 
 local counter = 0
 
-
 -- controllers
 
 function index(web)
   return render_index('',false)
+end
+
+local function lstm_prediction(cnn_output)
+  -- run the lstm iteratively to compute a sentence
+  local sentence
+
+  local previous_output = cnn_output:clone() -- the first input is the image, then the input will be the last word
+
+  local raw_lstm=lstm.module.module
+
+  for s = 1, MAX_SENTENCE_LENGTH do -- no stop criterion yet
+    local word_output_batch = raw_lstm:forward(previous_output):clone()
+
+    -- here we have word_output which is a sofmax and convert it to a true one hot vector
+    local word_output = GloVe:softMax2oneHot(word_output_batch) 
+
+    -- second compute an embedding to reboot into 'previous word' as the lstm input
+    local word_ouput_embedded = encode_layer:forward(word_output):clone()
+
+    -- compute current word
+    local token = GloVe:token(word_output)
+
+    print("token",token)
+    sentence = sentence == nil and token  or  sentence..' '..token 
+    previous_output = word_ouput_embedded -- loop back output word to next input
+  end
+
+  lstm:forget() -- necessary otherwise the system works only for the first prediction
+
+  return sentence
 end
 
 -- process the image and do the prediction work using the model 
@@ -99,24 +149,14 @@ local function prediction(web)
   -- apply the cnn model loaded by ml_init()
   local output = cnn:forward(input):float()
 
-  -- make an lstm input by repeating cnn output
-  local BatchInputTable = {}
-  for s = 1, MAX_SENTENCE_LENGTH do -- fixme define stop criterium ?
-    BatchInputTable[s] = torch.reshape(output,CNN_OUTPUT_SIZE)
-  end
+  print("cnn output has been computed")
 
-  -- finally, use lstm model to compute a sequence of predicted word vectors
-  local words = lstm:forward(BatchInputTable)
-  local sentence
-  for i, word in pairs(words) do
-    local result = GloVe:distance(word)
-    local returnwords = result[2]
-    if sentence == nil then
-      sentence = GloVe:vec2word(word)
-    else  
-      sentence = sentence..' '..GloVe:vec2word(word)
-    end  
-  end  
+  local cnn_output = torch.reshape(output, CNN_OUTPUT_SIZE) -- flatten the CNN output
+
+  --torch.save ('/Users/yves/Documents/lrcn2/parameters/cnn_output.t7',cnn_output) -- for tests
+
+  local sentence = lstm_prediction(cnn_output) 
+
   return render_index(sentence,true)
 end
 
@@ -147,4 +187,23 @@ end
 
 
 return _M
+
+--[[
+  local input_sequence={}
+
+  for s = 1, MAX_SENTENCE_LENGTH do
+    input_sequence[s] = torch.zeros(1, CNN_OUTPUT_SIZE)
+    input_sequence[s][1] = cnn_output:clone()
+  end  
+
+  lstm_output = lstm:forward(input_sequence)
+
+  for s = 1, MAX_SENTENCE_LENGTH do
+    print("lstm ouput",lstm_output[s][1][3981],lstm_output[s][1][3982],lstm_output[s][1][3983],lstm_output[s][1][3984])
+    local word_decoded = GloVe:softMax2oneHot(lstm_output[s][1])
+    local token = GloVe:token(word_decoded)
+    token = token:gsub("<(%w+)>","%1")
+    sentence = sentence == nil and token  or  sentence..' '..token
+  end  
+]]--
 

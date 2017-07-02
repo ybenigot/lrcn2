@@ -1,0 +1,24 @@
+    target sentence : a police officer talking to a woman on a sidewalk <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed94 : multi multi multi sectional sectional toothbrush toothbrush toothbrush toothbrush toothbrush cord cord cord cord cord cord cord cord cord cord
+batch loss : 165.84693717957
+    target sentence : there are people that are standing on the ship <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed51 : a a a a under television product leafs leafs leafs wheat wheat wheat wheat wheat wheat wheat wheat wheat wheat
+batch loss : 164.61170864105
+    target sentence : a bedroom that looks like a hotel room includes a television and bed <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed115 : a a a a a a a tv leafs leafs leafs leafs leafs leafs leafs pumpkins pumpkins pumpkins pumpkins pumpkins
+batch loss : 162.98255634308
+    target sentence : some woman standing on stage doing a log with umbrellas <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed126 : a a a a a a a flying leafs leafs leafs leafs pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins
+batch loss : 162.86497783661
+    target sentence : a basket filled with fruits and cake with stuffed toy birds <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed67 : a a a a sitting bow bow leafs leafs leafs leafs leafs pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins pumpkins
+batch loss : 162.94429159164
+    target sentence : a woman that is sitting in front of a pizza <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed112 : a a a a a a a a tree leafs leafs leafs <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+batch loss : 160.08269119263
+    target sentence : a group of well dressed women sitting next to each other with small children <unk> <unk> <unk> <unk> <unk> <unk>
+computed135 : a a a a a a a a a a tree leafs leafs leafs <unk> <unk> <unk> <unk> <unk> <unk>
+batch loss : 153.72025966644
+    target sentence : a made up bed with a pile of newspapers on it <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+computed189 : a a a a a a a a a a tree leafs <unk> <unk> <unk> <unk> <unk> <unk> <unk> <unk>
+batch loss : 154.38321304321
